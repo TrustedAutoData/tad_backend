@@ -13,10 +13,17 @@ import {
 import { CarsService } from './cars.service';
 import { CreateCarDto } from './dto/create-car.dto';
 import { UpdateCarDto } from './dto/update-car.dto';
+import { RegisterCarKmDto } from './dto/register-km.dto';
+import { RegisterServiceAttendanceDto } from './dto/register-service-attendance.dto';
+import { GetReportDto, ReportCarErrorDto } from './dto/report.dto';
+import { AddUserPointsDto } from './dto/add-user-points.dto';
+import { GetCarDataDto } from './dto/get-car-data.dto';
+import { GetReportDataDto } from './dto/get-report.dto';
+import { GetDealerReportDataDto } from './dto/get-dealer-report.dto';
 
 @Controller('cars')
 export class CarsController {
-  constructor(private readonly svc: CarsService) {}
+  constructor(private readonly carService: CarsService) {}
 
   @Get()
   findAll(
@@ -24,29 +31,29 @@ export class CarsController {
     @Query('dealerId') dealerId?: string,
     @Query('search') search?: string,
   ) {
-    return this.svc.findAll({ status, dealerId, search });
+    return this.carService.findAll({ status, dealerId, search });
   }
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateCarDto) {
-    return this.svc.create(dto);
+    return this.carService.create(dto);
   }
 
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.svc.findOne(id);
+    return this.carService.findOne(id);
   }
 
   @Put(':id')
   update(@Param('id') id: string, @Body() dto: UpdateCarDto) {
-    return this.svc.update(id, dto);
+    return this.carService.update(id, dto);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(@Param('id') id: string) {
-    return this.svc.remove(id);
+    return this.carService.remove(id);
   }
 
   @Get(':id/telemetry')
@@ -55,11 +62,79 @@ export class CarsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
   ) {
-    return this.svc.getTelemetry(id, from, to);
+    return this.carService.getTelemetry(id, from, to);
   }
 
   @Get(':id/blockchain')
   getBlockchain(@Param('id') id: string, @Query('limit') limit = 10) {
-    return this.svc.getBlockchain(id, limit);
+    return this.carService.getBlockchain(id, limit);
+  }
+
+  @Post('register-km')
+  async registerCarKm(@Body() dto: RegisterCarKmDto) {
+    const { vin, km } = dto;
+    const tx = await this.carService.registerCarKm(vin, km);
+    return { transaction: tx };
+  }
+
+  @Post('register-service')
+  async registerServiceAttendance(@Body() dto: RegisterServiceAttendanceDto) {
+    const { vin, reportId, uri, serviceType } = dto;
+    const tx = await this.carService.registerServiceAttendance(vin, reportId, uri, serviceType);
+    return { transaction: tx };
+  }
+
+  @Post('get-report')
+  async getReport(@Body() dto: GetReportDto) {
+    const { vin, reportId, contentUri, reportType } = dto;
+    const tx = await this.carService.getReport(vin, reportId, contentUri, reportType);
+    return { transaction: tx };
+  }
+
+  @Post('report-error')
+  async reportCarError(@Body() dto: ReportCarErrorDto) {
+    const { vin, errorCode, errorMessage } = dto;
+    const tx = await this.carService.reportCarError(vin, errorCode, errorMessage);
+    return { transaction: tx };
+  }
+
+  @Post('add-points')
+  async addUserPoints(@Body() dto: AddUserPointsDto) {
+    const { points } = dto;
+    const tx = await this.carService.addUserPoints(points);
+    return { transaction: tx };
+  }
+
+  @Post('get-data')
+  async getCarData(@Body() dto: GetCarDataDto) {
+    console.log('Received DTO in getCarData:', JSON.stringify(dto));
+    const { vin } = dto;
+    console.log(`Extracted vin: ${vin}`);
+    const carData = await this.carService.getCarData(vin);
+    return { carData };
+  }
+
+  @Post('get-report-data')
+  async getReportData(@Body() dto: GetReportDataDto) {
+    console.log('Received DTO in getReportData:', JSON.stringify(dto));
+    const { vin, reportId } = dto;
+    console.log(`Extracted vin: ${vin}, reportId: ${reportId}`);
+    const reportData = await this.carService.getReportData(vin, reportId);
+    return { reportData };
+  }
+
+  @Post('get-dealer-report-data')
+  async getDealerReportData(@Body() dto: GetDealerReportDataDto) {
+    console.log('Received DTO in getDealerReportData:', JSON.stringify(dto));
+    const { vin, reportId } = dto;
+    console.log(`Extracted vin: ${vin}, reportId: ${reportId}`);
+    const dealerReportData = await this.carService.getDealerReportData(vin, reportId);
+    return { dealerReportData };
+  }
+
+  @Post('user-data')
+  async getUserData() {
+    const userData = await this.carService.getUserData();
+    return { userData };
   }
 }

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Car, Certificate, Dealer, User } from './entities';
+import { CarsModule } from './cars/cars.module';
 
 @Module({
   imports: [
@@ -21,7 +22,7 @@ import { Car, Certificate, Dealer, User } from './entities';
       }),
     }),
     TypeOrmModule.forFeature([Car, User, Dealer, Certificate]),
-    // ... your modules here
+    CarsModule
   ],
 })
 export class AppModule {}
