@@ -79,15 +79,15 @@ export class CarsController {
 
   @Post('register-service')
   async registerServiceAttendance(@Body() dto: RegisterServiceAttendanceDto) {
-    const { vin, reportId, uri, serviceType } = dto;
-    const tx = await this.carService.registerServiceAttendance(vin, reportId, uri, serviceType);
+    const { vin, reportId, serviceType } = dto;
+    const tx = await this.carService.registerServiceAttendance(vin, reportId, serviceType);
     return { transaction: tx };
   }
 
   @Post('get-report')
   async getReport(@Body() dto: GetReportDto) {
-    const { vin, reportId, contentUri, reportType } = dto;
-    const tx = await this.carService.getReport(vin, reportId, contentUri, reportType);
+    const { vin, reportId, reportType } = dto;
+    const tx = await this.carService.getReport(vin, reportId, reportType);
     return { transaction: tx };
   }
 

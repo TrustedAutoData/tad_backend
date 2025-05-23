@@ -10,9 +10,5 @@ export class RegisterServiceAttendanceDto {
 
   @IsString()
   @IsNotEmpty()
-  uri: string;
-
-  @IsString()
-  @IsNotEmpty()
   serviceType: string;
 }

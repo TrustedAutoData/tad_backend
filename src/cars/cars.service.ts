@@ -369,10 +369,46 @@ export class CarsService {
   }
 
   /** Registers service attendance and mints an NFT */
-  async registerServiceAttendance(vin: string, reportId: number, uri: string, serviceType: string): Promise<string> {
-    console.log(`Registering service attendance for VIN: ${vin}, reportId: ${reportId}, serviceType: ${serviceType}, uri: ${uri}`);
+  async registerServiceAttendance(vin: string, reportId: number, serviceType: string): Promise<string> {
+    console.log(`Registering service attendance for VIN: ${vin}, reportId: ${reportId}, serviceType: ${serviceType}`);
+    try{
     const carPda = await this.getCarPda(vin);
+    const carAccount = await this.program.account.car.fetch(carPda);
     const reportDataPda = await this.getReportDataPda(carPda, new anchor.BN(reportId));
+
+    console.log(`Generating nft metadata ...`);
+    const metadata = {
+      name: "Service Attendence",
+      symbol: 'TAD',
+      description: "Nft confirming service attendance.",
+      image: process.env.REPORT_IMAGE_URL || 'https://static.vecteezy.com/ti/gratis-vektor/p1/20499566-mitsubishi-logo-marke-symbol-mit-name-weiss-design-japan-auto-automobil-illustration-mit-schwarz-hintergrund-kostenlos-vektor.jpg',
+      animation_url: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
+      external_url: 'https://tad.com',
+      attributes: [
+        { trait_type: 'Report Id', value: reportId },
+        { trait_type: 'VIN', value: vin },
+        { trait_type: 'Service Type', value: serviceType },
+        { trait_type: 'Total KM', value: carAccount.totalKm.toString(10) },
+      ],
+      properties: {
+        files: [
+          {
+            uri: 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
+            type: 'image/png',
+          },
+          {
+            uri: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
+            type: 'video/mp4',
+          },
+        ],
+        category: 'image',
+      },
+    };
+  
+    // Step 5: Upload metadata to IPFS
+    const metadataUpload = await this.pinata.upload.json(metadata);
+    const metadataUri = `https://${metadataUpload.IpfsHash}.ipfs.dweb.link/`;
+
     const ownerNft = await Keypair.generate();
     console.log(`Generated owner NFT keypair: ${ownerNft.publicKey.toBase58()}`);
     console.log(`Calling registerServiceAttendance with car PDA: ${carPda.toBase58()}, report data PDA: ${reportDataPda.toBase58()}`);
@@ -386,7 +422,7 @@ export class CarsService {
     });
 
     const tx = await this.program.methods
-      .registerServiceAttendance(new anchor.BN(reportId), uri, serviceType)
+      .registerServiceAttendance(new anchor.BN(reportId), metadataUri, serviceType)
       .accounts({
         car: carPda,
         reportData: reportDataPda,
@@ -416,19 +452,59 @@ export class CarsService {
     });
 
     if (!signature) {
-      throw new InternalServerErrorException(`Failed to register service attendance for VIN: ${vin}, reportId: ${reportId}, serviceType: ${serviceType}, uri: ${uri}`);
+      throw new InternalServerErrorException(`Failed to register service attendance for VIN: ${vin}, reportId: ${reportId}, serviceType: ${serviceType}`);
     }
 
     console.log(`Service attendance registered and NFT minted, transaction: ${signature}`);
     return `Service attendance registered and NFT minted, transaction: ${signature}`;
+   }catch(error){
+    console.log(error.message);
+    throw new InternalServerErrorException(error.message);
+   }
   }
 
   /** Retrieves a car report and mints an NFT */
-  async getReport(vin: string, reportId: number, contentUri: string, reportType: string): Promise<string> {
-    console.log(`Retrieving car report for VIN: ${vin}, reportId: ${reportId}, reportType: ${reportType}, contentUri: ${contentUri}`);
+  async getReport(vin: string, reportId: number, reportType: string): Promise<string> {
+    console.log(`Retrieving car report for VIN: ${vin}, reportId: ${reportId}, reportType: ${reportType}`);
+    try{
     const carPda = await this.getCarPda(vin);
+    const carAccount = await this.program.account.car.fetch(carPda);
     const dealerReportDataPda = await this.getDealerReportDataPda(carPda, new anchor.BN(reportId));
     const configPda = await this.getConfigPda();
+
+    console.log(`Generating nft metadata ...`);
+    const metadata = {
+      name: "Dealer Report",
+      symbol: 'TAD',
+      description: "Nft for dealer report.",
+      image: process.env.REPORT_IMAGE_URL || 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
+      animation_url: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
+      external_url: 'https://tad.com',
+      attributes: [
+        { trait_type: 'Report Id', value: reportId },
+        { trait_type: 'VIN', value: vin },
+        { trait_type: 'Report Type', value: reportType },
+        { trait_type: 'Total KM', value: carAccount.totalKm.toString(10) },
+      ],
+      properties: {
+        files: [
+          {
+            uri: 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
+            type: 'image/png',
+          },
+          {
+            uri: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
+            type: 'video/mp4',
+          },
+        ],
+        category: 'image',
+      },
+    };
+  
+    // Step 5: Upload metadata to IPFS
+    const metadataUpload = await this.pinata.upload.json(metadata);
+    const metadataUri = `https://${metadataUpload.IpfsHash}.ipfs.dweb.link/`;
+
     const ownerNft = await Keypair.generate();
     console.log(`Generated owner NFT keypair: ${ownerNft.publicKey.toBase58()}`);
     console.log(`Calling getReport with car PDA: ${carPda.toBase58()}, dealer report data PDA: ${dealerReportDataPda.toBase58()}, config PDA: ${configPda.toBase58()}`);
@@ -442,7 +518,7 @@ export class CarsService {
     });
 
     const tx = await this.program.methods
-      .getReport(new anchor.BN(reportId), contentUri, reportType)
+      .getReport(new anchor.BN(reportId), metadataUri, reportType)
       .accounts({
         car: carPda,
         dealerReportData: dealerReportDataPda,
@@ -474,11 +550,14 @@ export class CarsService {
     });
 
     if (!signature) {
-      throw new InternalServerErrorException(`Failed retrieving car report for VIN: ${vin}, reportId: ${reportId}, reportType: ${reportType}, contentUri: ${contentUri}`);
+      throw new InternalServerErrorException(`Failed retrieving car report for VIN: ${vin}, reportId: ${reportId}, reportType: ${reportType}`);
     }
-
     console.log(`Car report retrieved and NFT minted, transaction: ${signature}`);
     return `Car report retrieved and NFT minted, transaction: ${signature}`;
+   }catch(error){
+    console.log(error.message);
+    throw new InternalServerErrorException(error.message);
+   }
   }
 
   /** Reports an error for a car */

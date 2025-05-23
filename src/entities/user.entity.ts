@@ -17,6 +17,9 @@ export class User {
   name: string;
 
   @Column({ unique: true })
+  privyId: string;
+
+  @Column({ unique: true })
   email: string;
 
   @Column({ nullable: true })
@@ -39,4 +42,10 @@ export class User {
 
   @OneToMany(() => Certificate, (cert) => cert.issuedTo)
   certificates: Certificate[];
+
+  @Column({ nullable: true })
+  sessionId: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  expiresAt: Date | null;
 }

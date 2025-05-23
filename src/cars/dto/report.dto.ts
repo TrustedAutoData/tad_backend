@@ -10,10 +10,6 @@ export class GetReportDto {
 
   @IsString()
   @IsNotEmpty()
-  contentUri: string;
-
-  @IsString()
-  @IsNotEmpty()
   reportType: string;
 }
 
