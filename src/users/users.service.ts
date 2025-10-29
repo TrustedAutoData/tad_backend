@@ -1,10 +1,19 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { User } from 'src/entities';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PrivyService } from 'src/privy/privy.service';
 import { nanoid } from 'nanoid';
+
+interface PostgresError {
+  code: string;
+  detail?: string;
+  table?: string;
+  constraint?: string;
+}
+
+type PossibleError = Error | PostgresError;
 
 @Injectable()
 export class UsersService {
@@ -19,45 +28,47 @@ export class UsersService {
     return [];
   }
 
-  async create(userCreateDto: CreateUserDto): Promise<User> {
-    const { privyAccessToken, ...data } = userCreateDto;
-  
-    const { userId } = await this.privyService.client.verifyAuthToken(privyAccessToken);
-    console.log("userId - ", userId);
-    const { linkedAccounts } = await this.privyService.client.getUserById(userId);
-  
-    const accountWithName: any = linkedAccounts?.find((account: any) =>
-      account?.name?.trim(),
+  private isPostgresError(error: PossibleError): error is PostgresError {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      typeof error.code === 'string'
     );
-  
-    const accountWithEmail: any = linkedAccounts?.find(
-      (account: any) => account?.email?.trim()
-    ) || linkedAccounts?.find(
-      (account: any) => account?.type === 'email' && account?.address?.trim()
-    );
-  
-    const [privyFirstName, privyLastName] = (accountWithName?.name || '').split(' ');
-    const email = accountWithEmail?.email || accountWithEmail?.address;
-
-    // Check if email already exists
-    const existingUserByEmail = await this.userRepository.findOne({ where: { email } });
-    if (existingUserByEmail) {
-      throw new BadRequestException('Email already exists');
-    }
-
-    const userData = {
-      privyId: userId,
-      email: email || `${nanoid()}@example.com`,
-      name: data.name || [privyFirstName, privyLastName].filter(Boolean).join(' ') || 'Name',
-    };
-
-    // Create and save the new user
-    const user = this.userRepository.create(userData);
-    return await this.userRepository.save(user);
   }
 
-  findOne(id: string) {
-    return { id };
+  async create(createUserDto: CreateUserDto): Promise<User> {
+    try {
+      // Create new user
+      const user = this.userRepository.create({
+        ...createUserDto,
+      });
+
+      // Save user to database
+      await this.userRepository.save(user);
+
+      return user;
+    } catch (error) {
+      // Type guard to check if error is a Postgres error
+      if (this.isPostgresError(error) && error.code === '23505') {
+        throw new ConflictException('Email already exists');
+      }
+      throw new InternalServerErrorException();
+    }
+  }
+
+  async findByPrivyId(privyId: string): Promise<User | null> {
+    const user = await this.userRepository.findOne({
+      where: { privyId },
+    });
+    
+    return user;
+  }
+
+  async findOne(id: string) {
+    return await this.userRepository.findOne({
+      where: { id },
+    });;
   }
 
   getPointsHistory(id: string) {

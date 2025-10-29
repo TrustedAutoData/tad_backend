@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
@@ -14,22 +14,28 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private userRepository: Repository<User>,
   ) {
     super({
-      jwtFromRequest: ExtractJwt.fromExtractors([
-        (request: any) => request?.cookies?.['TAD-Access-Token'],
-      ]),
-      ignoreExpiration: false,
-      secretOrKey: configService.get('JWT_SECRET')!,
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      secretOrKey: configService.get<string>('JWT_SECRET', 'your-secret-key'),
     });
   }
 
-  async validate(payload: { userId: string; email: string }) {
+  async validate(payload: {
+    sub: string;
+    email: string;
+  }) {
+    const { sub } = payload;
     const user = await this.userRepository.findOne({
-      where: { id: payload.userId },
-      relations: ['cars', 'certificates'],
+      where: { id: sub },
     });
+    console.log('sub', sub, 'user', user)
+
     if (!user) {
-      throw new Error('User not found');
+      throw new UnauthorizedException();
     }
+
+    // Create a new object without the password
+    const { sessionId, ...userWithoutPassword } = user;
+
     return user;
   }
 }

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
@@ -11,6 +11,11 @@ import { Repository } from 'typeorm';
 import { User } from 'src/entities';
 import { UsersService } from 'src/users/users.service';
 import * as crypto from 'crypto';
+
+interface JwtPayload {
+  sub: string; // User ID
+  email: string;
+}
 
 @Injectable()
 export class AuthService {
@@ -63,22 +68,67 @@ export class AuthService {
     }
   }
 
-  async loginWithPrivy(loginWithPrivyDto: LoginWithPrivyDto, sessionId?: string) {
+  // async loginWithPrivy(loginWithPrivyDto: LoginWithPrivyDto, sessionId?: string) {
+  //   try {
+  //     const { privyAccessToken } = loginWithPrivyDto;
+  //     const user = await this.validateUserByPrivyAccessToken(privyAccessToken);
+  //     const accessToken = await this.generateJwtTokenPrivy(user);
+  //     const newSessionId = sessionId || crypto.randomUUID();
+  //     const expiresAt = new Date(Date.now() + Number(this.configService.get('SESSION_MAX_AGE') || 86400000));
+  //     user.sessionId = newSessionId;
+  //     user.expiresAt = expiresAt;
+  //     await this.userRepository.save(user);
+  //     return { ...user, accessToken };
+  //   } catch (error) {
+  //     if (error instanceof AuthException) {
+  //       throw error;
+  //     }
+  //     throw new AuthException('Cannot authorize the user');
+  //   }
+  // }
+
+  private async createUserFromPrivyToken(userPrivyId: string): Promise<User> {
+    const { linkedAccounts } = await this.privyService.client.getUserById(userPrivyId);
+    const accountWithName: any = linkedAccounts?.find((account: any) => account?.name?.trim());
+    const accountWithEmail: any = linkedAccounts?.find((account: any) => account?.email?.trim());
+
+    console.log('linkedAccounts', linkedAccounts);
+
+    const [firstName, lastName] = (accountWithName?.name || '').split(' ');
+    const email = accountWithEmail?.email;
+    const nickname = email.split('@')[0];
+
+    const newUser = {
+      email: email,
+      privyId: userPrivyId,
+      name: accountWithName?.name || '',
+    };
+
+    return this.userService.create(
+      newUser
+    );
+  }
+
+  public async loginWithPrivy(loginWithPrivyDto: LoginWithPrivyDto) {
     try {
       const { privyAccessToken } = loginWithPrivyDto;
-      const user = await this.validateUserByPrivyAccessToken(privyAccessToken);
-      const accessToken = await this.generateJwtTokenPrivy(user);
-      const newSessionId = sessionId || crypto.randomUUID();
-      const expiresAt = new Date(Date.now() + Number(this.configService.get('SESSION_MAX_AGE') || 86400000));
-      user.sessionId = newSessionId;
-      user.expiresAt = expiresAt;
-      await this.userRepository.save(user);
-      return { ...user, accessToken };
-    } catch (error) {
-      if (error instanceof AuthException) {
-        throw error;
+      const { userId } = await this.privyService.client.verifyAuthToken(privyAccessToken);
+      let user = await this.userService.findByPrivyId(userId);
+      // if user with id from token is not created then create one
+      if (!user) {
+        user = await this.createUserFromPrivyToken(userId);
       }
-      throw new AuthException('Cannot authorize the user');
+
+      console.log('userId', userId, 'privyAccessToken', privyAccessToken, 'user', user);
+
+      const tokenPayload: JwtPayload = { sub: user.id, email: user.email };
+      const accessToken = this.jwtService.sign(tokenPayload);
+
+
+      return { user, accessToken };
+    } catch (error) {
+      console.log(error);
+      throw new UnauthorizedException('Cannot authorize the user with provided Privy token.');
     }
   }
 

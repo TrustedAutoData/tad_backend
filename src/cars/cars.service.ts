@@ -1,10 +1,14 @@
-import { BadRequestException, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { CreateCarDto } from './dto/create-car.dto';
 import { UpdateCarDto } from './dto/update-car.dto';
 import * as anchor from '@coral-xyz/anchor';
 import { PublicKey, Keypair, SystemProgram, ComputeBudgetProgram } from '@solana/web3.js';
 import { PinataSDK } from 'pinata-web3';
 import { TadContracts } from 'src/types/tad_contracts/tad_contracts';
+import bs58 from "bs58";
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Car, CarStatus } from 'src/entities/car.entity';
 
 @Injectable()
 export class CarsService {
@@ -13,7 +17,10 @@ export class CarsService {
   private readonly provider: anchor.AnchorProvider;
   private readonly adminWalletKeypair: Keypair;
 
-  constructor() {
+  constructor(
+    @InjectRepository(Car)
+    private readonly carRepository: Repository<Car>,
+  ) {
     // Initialize Pinata for IPFS uploads
     this.pinata = new PinataSDK({
       pinataJwt: process.env.PINATA_JWT || '',
@@ -22,15 +29,16 @@ export class CarsService {
 
     // Set up Solana connection and admin wallet
     const connection = new anchor.web3.Connection(process.env.SOLANA_CONNECTION || 'https://api.devnet.solana.com');
+
     this.adminWalletKeypair = Keypair.fromSecretKey(
-      Buffer.from(JSON.parse(process.env.SOLANA_WALLET_SECRET_KEY || '[]'))
+      bs58.decode(process.env.SOLANA_WALLET_SECRET_KEY!)
     );
     const wallet = new anchor.Wallet(this.adminWalletKeypair);
     this.provider = new anchor.AnchorProvider(connection, wallet, { commitment: 'confirmed' });
     anchor.setProvider(this.provider);
 
     // Load the program IDL
-    const idl = require('../../../tad_contracts/target/idl/tad_contracts.json'); // Adjust path as needed
+    const idl = require('../../tad_contracts.json'); // Adjust path as needed
     this.program = new anchor.Program(
       idl,
       new PublicKey(process.env.SMART_CONTRACT_ADDRESS || ''),
@@ -38,34 +46,75 @@ export class CarsService {
     );
   }
 
-  findAll(filters: { status?: string; dealerId?: string; search?: string }) {
-    // TODO: implement filtering
-    return [];
+  async findAll(params: { status?: string; dealerId?: string; search?: string }) {
+    const { status, dealerId, search } = params;
+
+    const query = this.carRepository
+      .createQueryBuilder('car')
+      .leftJoinAndSelect('car.owner', 'owner')
+      .leftJoinAndSelect('car.dealer', 'dealer')
+      .leftJoinAndSelect('car.certificates', 'certificates');
+
+    if (status) {
+      query.andWhere('car.status = :status', { status })
+    }
+    if (dealerId) {
+      query.andWhere('dealer.id = :dealerId', { dealerId })
+    }
+    if (search) {
+      query.andWhere(
+        '(car.vin ILIKE :search OR car.model ILIKE :search OR car.make ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    return await query.getMany();
   }
 
-  create(dto: CreateCarDto) {
-    // TODO: create a car record
-    return { id: 'new-id', ...dto };
+  async create(dto: CreateCarDto): Promise<Car> {
+    console.log('CreateCarDto', dto)
+    // ensure VIN is unique
+    const existing = await this.carRepository.findOne({ where: { vin: dto.vin } });
+    if (existing) {
+      throw new BadRequestException(`car with VIN ${dto.vin} already exists`);
+    }
+
+    const car = this.carRepository.create({
+      ...dto,
+      status: CarStatus.Pending,
+      owner: { id: dto.ownerId }
+    });
+
+    return await this.carRepository.save(car);
   }
 
-  findOne(id: string) {
-    // TODO: lookup by id
-    return { id };
+  async findOne(id: string): Promise<Car> {
+    const car = await this.carRepository.findOne({
+      where: { id },
+      relations: ['owner', 'dealer', 'certificates'],
+    });
+    if (!car) {
+      throw new NotFoundException(`car with ID ${id} not found`);
+    }
+
+    return car;
   }
 
-  update(id: string, dto: UpdateCarDto) {
-    // TODO: update
-    return { id, ...dto };
+
+  async update(id: string, dto: UpdateCarDto): Promise<Car> {
+    const car = await this.findOne(id);
+    Object.assign(car, dto);
+    return await this.carRepository.save(car);
   }
 
-  remove(id: string) {
-    // TODO: delete
-    return;
+  async remove(id: string): Promise<void> {
+    const car = await this.findOne(id);
+    await this.carRepository.remove(car);
   }
 
-   // --- PDA Derivation and Initialization Methods ---
+  // --- PDA Derivation and Initialization Methods ---
 
-   private async getConfigPda(): Promise<PublicKey> {
+  private async getConfigPda(): Promise<PublicKey> {
     const [configPda] = PublicKey.findProgramAddressSync(
       [Buffer.from('config')],
       this.program.programId
@@ -110,25 +159,25 @@ export class CarsService {
         })
         .transaction();
 
-        const blockhash = await this.provider.connection.getLatestBlockhash('confirmed');
-        const blockheight =  blockhash.lastValidBlockHeight;
-  
-        tx.recentBlockhash = blockhash.blockhash;
-        tx.lastValidBlockHeight = blockheight;
-  
-        tx.add(modifyComputeUnits);
-        tx.add(addPriorityFee);
-  
-        // Send and confirm transaction
-    const signature = await this.provider.sendAndConfirm(tx, [this.adminWalletKeypair], {
-      commitment: 'confirmed',
-      maxRetries: 3,
-    });
+      const blockhash = await this.provider.connection.getLatestBlockhash('confirmed');
+      const blockheight = blockhash.lastValidBlockHeight;
 
-    if (!signature) {
-      throw new InternalServerErrorException(`Failed to initialize dealer.`);
-    }
-      
+      tx.recentBlockhash = blockhash.blockhash;
+      tx.lastValidBlockHeight = blockheight;
+
+      tx.add(modifyComputeUnits);
+      tx.add(addPriorityFee);
+
+      // Send and confirm transaction
+      const signature = await this.provider.sendAndConfirm(tx, [this.adminWalletKeypair], {
+        commitment: 'confirmed',
+        maxRetries: 3,
+      });
+
+      if (!signature) {
+        throw new InternalServerErrorException(`Failed to initialize dealer.`);
+      }
+
       console.log(`Dealer initialized with transaction: ${tx}`);
     }
     return dealerPda;
@@ -236,8 +285,8 @@ export class CarsService {
     }
   }
 
-   /** Retrieves report data by VIN and reportId */
-   async getReportData(vin: string, reportId: number): Promise<any> {
+  /** Retrieves report data by VIN and reportId */
+  async getReportData(vin: string, reportId: number): Promise<any> {
     if (!vin || reportId == null) {
       console.error('Invalid input: vin and reportId are required');
       throw new Error('Invalid input: vin and reportId are required');
@@ -344,7 +393,7 @@ export class CarsService {
         owner: this.adminWalletKeypair.publicKey,
       })
       .transaction();
-    
+
     // Set blockhash and block height
     const { blockhash, lastValidBlockHeight } = await this.provider.connection.getLatestBlockhash('confirmed');
     tx.recentBlockhash = blockhash;
@@ -371,193 +420,193 @@ export class CarsService {
   /** Registers service attendance and mints an NFT */
   async registerServiceAttendance(vin: string, reportId: number, serviceType: string): Promise<string> {
     console.log(`Registering service attendance for VIN: ${vin}, reportId: ${reportId}, serviceType: ${serviceType}`);
-    try{
-    const carPda = await this.getCarPda(vin);
-    const carAccount = await this.program.account.car.fetch(carPda);
-    const reportDataPda = await this.getReportDataPda(carPda, new anchor.BN(reportId));
+    try {
+      const carPda = await this.getCarPda(vin);
+      const carAccount = await this.program.account.car.fetch(carPda);
+      const reportDataPda = await this.getReportDataPda(carPda, new anchor.BN(reportId));
 
-    console.log(`Generating nft metadata ...`);
-    const metadata = {
-      name: "Service Attendence",
-      symbol: 'TAD',
-      description: "Nft confirming service attendance.",
-      image: process.env.REPORT_IMAGE_URL || 'https://static.vecteezy.com/ti/gratis-vektor/p1/20499566-mitsubishi-logo-marke-symbol-mit-name-weiss-design-japan-auto-automobil-illustration-mit-schwarz-hintergrund-kostenlos-vektor.jpg',
-      animation_url: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
-      external_url: 'https://tad.com',
-      attributes: [
-        { trait_type: 'Report Id', value: reportId },
-        { trait_type: 'VIN', value: vin },
-        { trait_type: 'Service Type', value: serviceType },
-        { trait_type: 'Total KM', value: carAccount.totalKm.toString(10) },
-      ],
-      properties: {
-        files: [
-          {
-            uri: 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
-            type: 'image/png',
-          },
-          {
-            uri: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
-            type: 'video/mp4',
-          },
+      console.log(`Generating nft metadata ...`);
+      const metadata = {
+        name: "Service Attendence",
+        symbol: 'TAD',
+        description: "Nft confirming service attendance.",
+        image: process.env.REPORT_IMAGE_URL || 'https://static.vecteezy.com/ti/gratis-vektor/p1/20499566-mitsubishi-logo-marke-symbol-mit-name-weiss-design-japan-auto-automobil-illustration-mit-schwarz-hintergrund-kostenlos-vektor.jpg',
+        animation_url: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
+        external_url: 'https://tad.com',
+        attributes: [
+          { trait_type: 'Report Id', value: reportId },
+          { trait_type: 'VIN', value: vin },
+          { trait_type: 'Service Type', value: serviceType },
+          { trait_type: 'Total KM', value: carAccount.totalKm.toString(10) },
         ],
-        category: 'image',
-      },
-    };
-  
-    // Step 5: Upload metadata to IPFS
-    const metadataUpload = await this.pinata.upload.json(metadata);
-    const metadataUri = `https://${metadataUpload.IpfsHash}.ipfs.dweb.link/`;
+        properties: {
+          files: [
+            {
+              uri: 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
+              type: 'image/png',
+            },
+            {
+              uri: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
+              type: 'video/mp4',
+            },
+          ],
+          category: 'image',
+        },
+      };
 
-    const ownerNft = await Keypair.generate();
-    console.log(`Generated owner NFT keypair: ${ownerNft.publicKey.toBase58()}`);
-    console.log(`Calling registerServiceAttendance with car PDA: ${carPda.toBase58()}, report data PDA: ${reportDataPda.toBase58()}`);
+      // Step 5: Upload metadata to IPFS
+      const metadataUpload = await this.pinata.upload.json(metadata);
+      const metadataUri = `https://${metadataUpload.IpfsHash}.ipfs.dweb.link/`;
 
-    // Define compute unit and priority fee instructions
-    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({
-      units: 200_000, // Standard for token transfers
-    });
-    const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
-      microLamports: 100_000, // 0.1 micro-lamports per compute unit
-    });
+      const ownerNft = await Keypair.generate();
+      console.log(`Generated owner NFT keypair: ${ownerNft.publicKey.toBase58()}`);
+      console.log(`Calling registerServiceAttendance with car PDA: ${carPda.toBase58()}, report data PDA: ${reportDataPda.toBase58()}`);
 
-    const tx = await this.program.methods
-      .registerServiceAttendance(new anchor.BN(reportId), metadataUri, serviceType)
-      .accounts({
-        car: carPda,
-        reportData: reportDataPda,
-        ownerNft: ownerNft.publicKey,
-        creator: this.adminWalletKeypair.publicKey,
-        owner: this.adminWalletKeypair.publicKey,
-        mplTokenMetadataProgram: new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'),
-        systemProgram: SystemProgram.programId,
-        mplCoreProgram: new PublicKey('CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d'),
-      })
-      .signers([ownerNft])
-      .transaction();
+      // Define compute unit and priority fee instructions
+      const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({
+        units: 200_000, // Standard for token transfers
+      });
+      const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
+        microLamports: 100_000, // 0.1 micro-lamports per compute unit
+      });
 
-    // Set blockhash and block height
-    const { blockhash, lastValidBlockHeight } = await this.provider.connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash;
-    tx.lastValidBlockHeight = lastValidBlockHeight;
+      const tx = await this.program.methods
+        .registerServiceAttendance(new anchor.BN(reportId), metadataUri, serviceType)
+        .accounts({
+          car: carPda,
+          reportData: reportDataPda,
+          ownerNft: ownerNft.publicKey,
+          creator: this.adminWalletKeypair.publicKey,
+          owner: this.adminWalletKeypair.publicKey,
+          mplTokenMetadataProgram: new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'),
+          systemProgram: SystemProgram.programId,
+          mplCoreProgram: new PublicKey('CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d'),
+        })
+        .signers([ownerNft])
+        .transaction();
 
-    // Add compute units and priority fee
-    tx.add(modifyComputeUnits);
-    tx.add(addPriorityFee);
+      // Set blockhash and block height
+      const { blockhash, lastValidBlockHeight } = await this.provider.connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
+      tx.lastValidBlockHeight = lastValidBlockHeight;
 
-    // Send and confirm transaction
-    const signature = await this.provider.sendAndConfirm(tx, [this.adminWalletKeypair, ownerNft], {
-      commitment: 'confirmed',
-      maxRetries: 3,
-    });
+      // Add compute units and priority fee
+      tx.add(modifyComputeUnits);
+      tx.add(addPriorityFee);
 
-    if (!signature) {
-      throw new InternalServerErrorException(`Failed to register service attendance for VIN: ${vin}, reportId: ${reportId}, serviceType: ${serviceType}`);
+      // Send and confirm transaction
+      const signature = await this.provider.sendAndConfirm(tx, [this.adminWalletKeypair, ownerNft], {
+        commitment: 'confirmed',
+        maxRetries: 3,
+      });
+
+      if (!signature) {
+        throw new InternalServerErrorException(`Failed to register service attendance for VIN: ${vin}, reportId: ${reportId}, serviceType: ${serviceType}`);
+      }
+
+      console.log(`Service attendance registered and NFT minted, transaction: ${signature}`);
+      return `Service attendance registered and NFT minted, transaction: ${signature}`;
+    } catch (error) {
+      console.log(error.message);
+      throw new InternalServerErrorException(error.message);
     }
-
-    console.log(`Service attendance registered and NFT minted, transaction: ${signature}`);
-    return `Service attendance registered and NFT minted, transaction: ${signature}`;
-   }catch(error){
-    console.log(error.message);
-    throw new InternalServerErrorException(error.message);
-   }
   }
 
   /** Retrieves a car report and mints an NFT */
   async getReport(vin: string, reportId: number, reportType: string): Promise<string> {
     console.log(`Retrieving car report for VIN: ${vin}, reportId: ${reportId}, reportType: ${reportType}`);
-    try{
-    const carPda = await this.getCarPda(vin);
-    const carAccount = await this.program.account.car.fetch(carPda);
-    const dealerReportDataPda = await this.getDealerReportDataPda(carPda, new anchor.BN(reportId));
-    const configPda = await this.getConfigPda();
+    try {
+      const carPda = await this.getCarPda(vin);
+      const carAccount = await this.program.account.car.fetch(carPda);
+      const dealerReportDataPda = await this.getDealerReportDataPda(carPda, new anchor.BN(reportId));
+      const configPda = await this.getConfigPda();
 
-    console.log(`Generating nft metadata ...`);
-    const metadata = {
-      name: "Dealer Report",
-      symbol: 'TAD',
-      description: "Nft for dealer report.",
-      image: process.env.REPORT_IMAGE_URL || 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
-      animation_url: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
-      external_url: 'https://tad.com',
-      attributes: [
-        { trait_type: 'Report Id', value: reportId },
-        { trait_type: 'VIN', value: vin },
-        { trait_type: 'Report Type', value: reportType },
-        { trait_type: 'Total KM', value: carAccount.totalKm.toString(10) },
-      ],
-      properties: {
-        files: [
-          {
-            uri: 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
-            type: 'image/png',
-          },
-          {
-            uri: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
-            type: 'video/mp4',
-          },
+      console.log(`Generating nft metadata ...`);
+      const metadata = {
+        name: "Dealer Report",
+        symbol: 'TAD',
+        description: "Nft for dealer report.",
+        image: process.env.REPORT_IMAGE_URL || 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
+        animation_url: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
+        external_url: 'https://tad.com',
+        attributes: [
+          { trait_type: 'Report Id', value: reportId },
+          { trait_type: 'VIN', value: vin },
+          { trait_type: 'Report Type', value: reportType },
+          { trait_type: 'Total KM', value: carAccount.totalKm.toString(10) },
         ],
-        category: 'image',
-      },
-    };
-  
-    // Step 5: Upload metadata to IPFS
-    const metadataUpload = await this.pinata.upload.json(metadata);
-    const metadataUri = `https://${metadataUpload.IpfsHash}.ipfs.dweb.link/`;
+        properties: {
+          files: [
+            {
+              uri: 'https://bafybeid2v2un5eziph75p4h2l3pykxnlrgde5gu6blzxs2nun5sryutmpe.ipfs.dweb.link/',
+              type: 'image/png',
+            },
+            {
+              uri: 'https://bafybeihvydpbj2h7qabs6fbklwnbt2ltbrekvjpqupquvizubm4xeb5nam.ipfs.dweb.link/',
+              type: 'video/mp4',
+            },
+          ],
+          category: 'image',
+        },
+      };
 
-    const ownerNft = await Keypair.generate();
-    console.log(`Generated owner NFT keypair: ${ownerNft.publicKey.toBase58()}`);
-    console.log(`Calling getReport with car PDA: ${carPda.toBase58()}, dealer report data PDA: ${dealerReportDataPda.toBase58()}, config PDA: ${configPda.toBase58()}`);
+      // Step 5: Upload metadata to IPFS
+      const metadataUpload = await this.pinata.upload.json(metadata);
+      const metadataUri = `https://${metadataUpload.IpfsHash}.ipfs.dweb.link/`;
 
-    // Define compute unit and priority fee instructions
-    const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({
-      units: 200_000, // Standard for token transfers
-    });
-    const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
-      microLamports: 100_000, // 0.1 micro-lamports per compute unit
-    });
+      const ownerNft = await Keypair.generate();
+      console.log(`Generated owner NFT keypair: ${ownerNft.publicKey.toBase58()}`);
+      console.log(`Calling getReport with car PDA: ${carPda.toBase58()}, dealer report data PDA: ${dealerReportDataPda.toBase58()}, config PDA: ${configPda.toBase58()}`);
 
-    const tx = await this.program.methods
-      .getReport(new anchor.BN(reportId), metadataUri, reportType)
-      .accounts({
-        car: carPda,
-        dealerReportData: dealerReportDataPda,
-        config: configPda,
-        ownerNft: ownerNft.publicKey,
-        creator: this.adminWalletKeypair.publicKey,
-        user: this.adminWalletKeypair.publicKey,
-        vault: new PublicKey('3Qc5TBFKHSbEKxD81e5Pcczdg8Y5goFHga6HJdKgRis5'), //admin wallet pub key
-        mplTokenMetadataProgram: new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'),
-        mplCoreProgram: new PublicKey('CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d'),
-        systemProgram: SystemProgram.programId,
-      })
-      .signers([ownerNft])
-      .transaction();
+      // Define compute unit and priority fee instructions
+      const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({
+        units: 200_000, // Standard for token transfers
+      });
+      const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
+        microLamports: 100_000, // 0.1 micro-lamports per compute unit
+      });
 
-    // Set blockhash and block height
-    const { blockhash, lastValidBlockHeight } = await this.provider.connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash;
-    tx.lastValidBlockHeight = lastValidBlockHeight;
+      const tx = await this.program.methods
+        .getReport(new anchor.BN(reportId), metadataUri, reportType)
+        .accounts({
+          car: carPda,
+          dealerReportData: dealerReportDataPda,
+          config: configPda,
+          ownerNft: ownerNft.publicKey,
+          creator: this.adminWalletKeypair.publicKey,
+          user: this.adminWalletKeypair.publicKey,
+          vault: new PublicKey('3Qc5TBFKHSbEKxD81e5Pcczdg8Y5goFHga6HJdKgRis5'), //admin wallet pub key
+          mplTokenMetadataProgram: new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'),
+          mplCoreProgram: new PublicKey('CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d'),
+          systemProgram: SystemProgram.programId,
+        })
+        .signers([ownerNft])
+        .transaction();
 
-    // Add compute units and priority fee
-    tx.add(modifyComputeUnits);
-    tx.add(addPriorityFee);
+      // Set blockhash and block height
+      const { blockhash, lastValidBlockHeight } = await this.provider.connection.getLatestBlockhash('confirmed');
+      tx.recentBlockhash = blockhash;
+      tx.lastValidBlockHeight = lastValidBlockHeight;
 
-    // Send and confirm transaction
-    const signature = await this.provider.sendAndConfirm(tx, [this.adminWalletKeypair, ownerNft], {
-      commitment: 'confirmed',
-      maxRetries: 3,
-    });
+      // Add compute units and priority fee
+      tx.add(modifyComputeUnits);
+      tx.add(addPriorityFee);
 
-    if (!signature) {
-      throw new InternalServerErrorException(`Failed retrieving car report for VIN: ${vin}, reportId: ${reportId}, reportType: ${reportType}`);
+      // Send and confirm transaction
+      const signature = await this.provider.sendAndConfirm(tx, [this.adminWalletKeypair, ownerNft], {
+        commitment: 'confirmed',
+        maxRetries: 3,
+      });
+
+      if (!signature) {
+        throw new InternalServerErrorException(`Failed retrieving car report for VIN: ${vin}, reportId: ${reportId}, reportType: ${reportType}`);
+      }
+      console.log(`Car report retrieved and NFT minted, transaction: ${signature}`);
+      return `Car report retrieved and NFT minted, transaction: ${signature}`;
+    } catch (error) {
+      console.log(error.message);
+      throw new InternalServerErrorException(error.message);
     }
-    console.log(`Car report retrieved and NFT minted, transaction: ${signature}`);
-    return `Car report retrieved and NFT minted, transaction: ${signature}`;
-   }catch(error){
-    console.log(error.message);
-    throw new InternalServerErrorException(error.message);
-   }
   }
 
   /** Reports an error for a car */
@@ -609,7 +658,7 @@ export class CarsService {
     const configPda = await this.getConfigPda();
     const userPda = await this.getUserPda();
     console.log(`Calling addUserPoints with config PDA: ${configPda.toBase58()}, user PDA: ${userPda.toBase58()}`);
-    
+
     // Define compute unit and priority fee instructions
     const modifyComputeUnits = ComputeBudgetProgram.setComputeUnitLimit({
       units: 200_000, // Standard for token transfers

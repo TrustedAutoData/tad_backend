@@ -46,24 +46,10 @@ export class AuthController {
       .json(user);
   }
 
-  @Post('/login/privy')
-  public async loginWithPrivy(
-    @Body() loginWithPrivyDto: LoginWithPrivyDto,
-    @Req() req: DefaultRequest,
-    @Res() response: Response,
-  ) {
-    const user = await this.authService.loginWithPrivy(
-      loginWithPrivyDto,
-      req.sessionID,
-    );
-
-    return response
-      .status(HttpStatus.CREATED)
-      .cookie('TAD-Access-Token', user.accessToken, {
-        httpOnly: true,
-        domain: this.configService.get<string>('COOKIE_DOMAIN'),
-      })
-      .json(user);
+  @Post('login-privy')
+  async loginWithPrivy(@Body() loginDto: LoginWithPrivyDto) {
+    console.log('loginDto', loginDto);
+    return await this.authService.loginWithPrivy(loginDto);
   }
 
   @Post('logout')

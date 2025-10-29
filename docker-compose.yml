@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   db:
-    image: postgres:latest
+    image: postgres:17
     container_name: tad_db
     restart: unless-stopped
     env_file:
@@ -12,7 +12,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASS}
       POSTGRES_DB: ${DB_NAME}
     ports:
-      - '${DB_PORT:-5432}:5432'
+      - '${DB_PORT:-5433}:5432'
     volumes:
       - db_data:/var/lib/postgresql/data
 

@@ -10,8 +10,8 @@ export class PrivyService {
   private readonly secret: string;
 
   constructor(options: PrivyModuleOptions) {
-    this.applicationId = options.applicationId;
-    this.secret = options.secret;
+    this.applicationId = 'cmhbrlmzo011iju0ch3rf1a2s';
+    this.secret = 'QyQB4FKpcWCZbBCnSyrc11Fv9bFmoGKNjFcvtuiTkBSFyrL8U2EqNpRC7mPuDyJ1BKjWPkorwM783TC8sHQK2B4';
     this.jwksEndpoint = options.jwksEndpoint;
 
     this.client = new PrivyClient(this.applicationId, this.secret);

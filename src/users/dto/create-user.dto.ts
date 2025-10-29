@@ -1,12 +1,9 @@
-import { IsString, IsEmail, IsOptional, IsNotEmpty, IsDefined } from 'class-validator';
+import { IsString, IsOptional } from 'class-validator';
 
 export class CreateUserDto {
-  @IsString()
-  @IsNotEmpty()
-  @IsDefined()
-  privyAccessToken: string;
-
   @IsString() name: string;
+
+  @IsString() email: string;
   //@IsEmail() email: string;
   @IsString() @IsOptional() phone?: string;
   @IsString() @IsOptional() address?: string;
