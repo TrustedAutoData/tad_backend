@@ -74,6 +74,12 @@ export class Car {
     address?: string;
   };
 
+  @Column({ type: 'jsonb', nullable: true })
+  kmRecords?: {
+    transaction: string;
+    kilometers: number;
+  }[];
+
   @ManyToOne(() => Dealer, (dealer) => dealer.cars, { nullable: true })
   @JoinColumn({ name: 'dealer_id' })
   dealer: Dealer;

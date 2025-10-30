@@ -72,8 +72,8 @@ export class CarsController {
 
   @Post('register-km')
   async registerCarKm(@Body() dto: RegisterCarKmDto) {
-    const { vin, km } = dto;
-    const tx = await this.carService.registerCarKm(vin, km);
+    const { vin, km, id } = dto;
+    const tx = await this.carService.registerCarKm(vin, km, id);
     return { transaction: tx };
   }
 

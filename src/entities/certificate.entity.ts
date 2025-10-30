@@ -30,6 +30,9 @@ export class Certificate {
   @Column('int', { nullable: true })
   nextService: number;
 
+  @Column('int')
+  price: number;
+
   @Column()
   technician: string;
 
@@ -46,7 +49,7 @@ export class Certificate {
   blockchainTx: string;
 
   @ManyToOne(() => Dealer, (dealer) => dealer.issuedCertificates, {
-    nullable: false,
+    nullable: true,
   })
   @JoinColumn({ name: 'dealer_id' })
   issuedBy: Dealer;

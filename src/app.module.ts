@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { PrivyModule } from './privy/privy.module';
 import { PrivyModuleOptions } from './privy/types/privy.types';
+import { CertificatesModule } from './certificates/certificates.module';
 
 @Module({
   imports: [
@@ -37,7 +38,8 @@ import { PrivyModuleOptions } from './privy/types/privy.types';
     TypeOrmModule.forFeature([Car, User, Dealer, Certificate]),
     CarsModule,
     AuthModule,
-    UsersModule
+    UsersModule,
+    CertificatesModule
   ],
 })
 export class AppModule {}

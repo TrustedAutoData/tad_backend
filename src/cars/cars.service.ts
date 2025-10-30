@@ -34,6 +34,7 @@ export class CarsService {
       bs58.decode(process.env.SOLANA_WALLET_SECRET_KEY!)
     );
     const wallet = new anchor.Wallet(this.adminWalletKeypair);
+    
     this.provider = new anchor.AnchorProvider(connection, wallet, { commitment: 'confirmed' });
     anchor.setProvider(this.provider);
 
@@ -374,7 +375,7 @@ export class CarsService {
   }
 
   /** Registers kilometers for a car */
-  async registerCarKm(vin: string, km: number): Promise<string> {
+  async registerCarKm(vin: string, km: number, id: string): Promise<{ kilometers: number; transaction: string; }> {
     console.log(`Registering car kilometers for VIN: ${vin}, KM: ${km}`);
     const carPda = await this.getCarPda(vin);
     console.log(`Calling registerCarKm with car PDA: ${carPda.toBase58()}`);
@@ -385,6 +386,10 @@ export class CarsService {
     const addPriorityFee = ComputeBudgetProgram.setComputeUnitPrice({
       microLamports: 100_000, // 0.1 micro-lamports per compute unit
     });
+
+    const car = await this.carRepository.findOne({
+      where: { id }
+    })
 
     const tx = await this.program.methods
       .registerCarKm(new anchor.BN(km))
@@ -409,12 +414,22 @@ export class CarsService {
       maxRetries: 3,
     });
 
-    if (!signature) {
+    if (!signature || !car) {
       throw new InternalServerErrorException(`Failed to register car kilometers for VIN: ${vin}, KM: ${km}`);
     }
 
-    console.log(`Car kilometers registered, transaction: ${signature}`);
-    return `Car kilometers registered, transaction: ${signature}`;
+    const kmRecord = {
+        kilometers: km,
+        transaction: signature,
+      }
+
+    car.kmRecords = (car?.kmRecords || [])
+      .concat(kmRecord)
+
+    await this.carRepository.save(car);
+
+    console.log(`Car kilometers registered, transaction: ${signature}, tx: ${tx}`);
+    return kmRecord;
   }
 
   /** Registers service attendance and mints an NFT */

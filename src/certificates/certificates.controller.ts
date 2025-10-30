@@ -27,6 +27,7 @@ export class CertificatesController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   create(@Body() dto: CreateCertificateDto) {
+    console.log('CreateCertificateDto', CreateCertificateDto)
     return this.svc.create(dto);
   }
 

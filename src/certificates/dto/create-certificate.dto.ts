@@ -1,9 +1,7 @@
 import {
   IsString,
   IsInt,
-  IsBoolean,
   IsArray,
-  ArrayNotEmpty,
   IsOptional,
 } from 'class-validator';
 
@@ -16,5 +14,5 @@ export class CreateCertificateDto {
   @IsString() technician: string;
   @IsString() @IsOptional() description?: string;
   @IsArray() parts: string[];
-  @IsString() dealerId: string;
+  @IsInt() price: number;
 }
